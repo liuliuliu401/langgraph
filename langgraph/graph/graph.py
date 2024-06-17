@@ -1,3 +1,6 @@
+# 运行过程中遇到了关于的字典错误
+# 这个包位于langgraph包内的graph文件夹内，修改了_finish部分
+# 可能由提示词设置引起的
 import logging
 from collections import defaultdict
 from typing import (
@@ -96,19 +99,35 @@ class Branch(NamedTuple):
         result = await self.path.ainvoke(value, config)
         return self._finish(writer, input, result)
 
-    def _finish(
-        self, writer: Callable[[list[str]], Optional[Runnable]], input: Any, result: Any
-    ):
+    def _finish(self, writer: Callable[[list[str]], Optional[Runnable]], input: Any, result: Any):
         if not isinstance(result, list):
             result = [result]
-        if self.ends:
-            destinations = [r if isinstance(r, Send) else self.ends[r] for r in result]
-        else:
-            destinations = result
-        if any(dest is None or dest == START for dest in destinations):
+
+        destinations = []
+        for r in result:
+            if isinstance(r, Send):
+                destinations.append(r)
+            elif isinstance(r, dict):
+                # 检查字典中是否有 'next_agent' 键
+                next_agent = r.get('next_agent')
+                if next_agent and next_agent in self.ends:
+                    # 如果 next_agent 是有效的，添加对应的节点到 destinations
+                    destinations.append(self.ends[next_agent])
+                else:
+                    # 如果 next_agent 键无效或不存在，输出错误并处理
+                    print(f"Error: Invalid or missing 'next_agent' in dictionary {r}")
+                    continue  # 根据需要决定是否继续处理其他项或者中断处理
+            else:
+                try:
+                    destinations.append(self.ends[r])
+                except KeyError:
+                    print(f"Error: Invalid destination {r}, not found in self.ends")
+
+        if any(dest is None or dest is START for dest in destinations):
             raise ValueError("Branch did not return a valid destination")
-        if any(p.node == END for p in destinations if isinstance(p, Send)):
+        if any(p.node is END for p in destinations if isinstance(p, Send)):
             raise InvalidUpdateError("Cannot send a packet to the END node")
+
         return writer(destinations) or input
 
 
